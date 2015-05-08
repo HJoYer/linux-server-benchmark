@@ -1,0 +1,130 @@
+#!/bin/env python2
+
+"""Linux server benchmark."""
+
+import sys
+import os
+import logging
+import subprocess
+import re
+
+
+class EnvironmentChecker:
+    def __init__(self, data):
+        self.data = data
+        self.data['require_os'] = 'CentOS.*6\.[0-9]+'
+        self.data['require_data_partition'] = '/data'
+        self.data['require_data_partition_available_space_GB'] = 4*1024
+
+    def run(self):
+        logging.debug("environment check ...")
+        logging.debug("check os ...")
+        if os.system('grep -E "' + self.data['require_os'] + '" /etc/issue >/dev/null') != 0:
+            self.data['invalid_os'] = True
+            raise Exception('invalid_os')
+        logging.info("check os [OK]")
+        logging.debug("check data partition " + self.data['require_data_partition'] + " ...")
+        if os.system('mount | grep "on ' + self.data['require_data_partition'] + ' type" >/dev/null') != 0:
+            self.data['invalid_data_partition'] = True
+            raise Exception('invalid_data_partition')
+        logging.info("check data partition " + self.data['require_data_partition'] + " [OK]")
+        logging.debug("check data partition " + self.data['require_data_partition'] + " available space ...")
+        if os.system("df -B g | grep -E '/data$' | awk '{print $4}' | awk -FG 'BEGIN {result=1} {if($1 >= " + str(self.data['require_data_partition_available_space_GB']) + "){result=0}} END {exit result}'") != 0:
+            self.data['invalid_data_partition_available_space_GB'] = True
+            raise Exception('invalid_data_partition_available_space_GB')
+        logging.debug("check data partition " + self.data['require_data_partition'] + " available space [OK]")
+        logging.debug("gather system information ...")
+        self.data['processes'] = os.popen("ps waux").read()
+        self.data['uptime'] = os.popen("uptime").read()
+        logging.info("gather system information [OK]")
+        logging.info("environment check [OK]")
+
+class DataGenerator:
+    def __init__(self, data):
+        self.data = data
+        self.data["data_size"] = 1*1024*1024*1024*1024
+
+    def run(self):
+        logging.debug("data generate ...")
+        if os.system("./nginx-tweak-master/filecreate/filecreate -q -d " + str(self.data["data_size"]) + " -p " + self.data['require_data_partition']) != 0:
+            raise Exception('data generate failed')
+        logging.info("data generate [OK]")
+
+
+class HttpTester:
+    def __init__(self, data):
+        self.data = data
+        self.data["http_test_seconds"] = 30
+
+    def run(self):
+        if os.path.exists("./nginx-tweak-master/data"):
+            os.remove("./nginx-tweak-master/data")
+        os.symlink(self.data['require_data_partition'], "./nginx-tweak-master/data")
+        logging.debug("http server start ...")
+        if os.system("cd ./nginx-tweak-master; ./nginx.restart >>/dev/null 2>&1") != 0:
+            raise Exception('start http server failed')
+        logging.info("http server start [OK]")
+        logging.debug("http server " + str(self.data["http_test_seconds"]) + " seconds test ...")
+        process = subprocess.Popen("echo 1 > /proc/sys/vm/drop_caches; ./nginx-tweak-master/stresstest/stresstest -d " + str(self.data["data_size"]) + " -c 500 -s -k -l -t " + str(self.data["http_test_seconds"]) + " 2>&1",
+                                   shell=True,
+                                   stdout=subprocess.PIPE)
+        while True:
+            line = process.stdout.readline()
+            line = line.decode("utf-8").strip()
+            if line.startswith(str(self.data["http_test_seconds"]) + " "):
+                self.data["http_test_output"] = line
+                break
+        logging.info("http server " + str(self.data["http_test_seconds"]) + " seconds test [OK]")
+        logging.debug("http server stop ...")
+        if os.system("cd ./nginx-tweak-master; ./nginx.stop >>/dev/null 2>&1") != 0:
+            raise Exception('stop http server failed')
+        logging.info("http server stop [OK]")
+
+
+class ReportGenerator:
+    def __init__(self, data):
+        self.data = data
+
+    def run(self):
+        try:
+            (connect, qps, failed, speed, response_time_avg, response_time_min, response_time_max) = tuple([int(x) for x in re.match(".*?([0-9]+) connect.*?success\\(qps: ([0-9]+)\\), ([0-9]+) failed.*?([0-9]+).*? bytes per second, response time\\(avg: ([0-9]+), min: ([0-9]+), max: ([0-9]+)\\)ms", self.data['http_test_output']).groups()])
+        except Exception as e:
+            raise Exception('parse http test output failed')
+        report = {"http_test": {"connect": connect, "qps": qps, "failed": failed, "speed": speed, "response_time": {"avg": response_time_avg, "min": response_time_min, "max": response_time_max}}}
+        logging.info("report: " + str(report))
+
+
+class ReportUploader:
+    def __init__(self, data):
+        self.data = data
+
+    def run(self):
+        raise Exception("report upload not implementation")
+
+
+class DataCleaner:
+    def __init__(self, data):
+        self.data = data
+
+    def run(self):
+        raise Exception("data clean not implementation")
+
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG,
+                        format='%(asctime)s %(levelname)s\t%(message)s')
+    data = {}
+    try:
+        for task in [EnvironmentChecker(data),
+                     DataGenerator(data),
+                     HttpTester(data),
+                     ReportGenerator(data),
+                     ReportUploader(data),
+                     DataCleaner(data)]:
+            task.run()
+    except Exception as e:
+        if e.args[0].startswith('invalid_'):
+            logging.error("invalid " + e.args[0][8:] + ", " + str(data['require_' + e.args[0][8:]]) + " required")
+        else:
+            logging.error(e)
+        sys.exit(1)
