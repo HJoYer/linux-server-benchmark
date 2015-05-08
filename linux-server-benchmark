@@ -28,7 +28,7 @@ class EnvironmentChecker:
         if os.system('uname -r | grep -E "' + self.data['require_kernel'] + '" >/dev/null') != 0:
             self.data['invalid_kernel'] = True
             raise Exception('invalid_kernel')
-        logging.info("check os [OK]")
+        logging.info("check kernel [OK]")
         logging.debug("check data partition " + self.data['require_data_partition'] + " ...")
         if os.system('mount | grep "on ' + self.data['require_data_partition'] + ' type" >/dev/null') != 0:
             self.data['invalid_data_partition'] = True
