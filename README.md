@@ -8,3 +8,7 @@ The linux server's benchmark application.
     cd linux-server-benchmark
     make
 
+### Run ###
+
+    cd linux-server-benchmark
+    ./linux-server-benchmark
