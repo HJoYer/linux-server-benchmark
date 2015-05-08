@@ -13,6 +13,7 @@ class EnvironmentChecker:
     def __init__(self, data):
         self.data = data
         self.data['require_os'] = 'CentOS.*6\.[0-9]+'
+        self.data['require_kernel'] = '2\.6\..*\.x86_64'
         self.data['require_data_partition'] = '/data'
         self.data['require_data_partition_available_space_GB'] = 4*1024
 
@@ -22,6 +23,11 @@ class EnvironmentChecker:
         if os.system('grep -E "' + self.data['require_os'] + '" /etc/issue >/dev/null') != 0:
             self.data['invalid_os'] = True
             raise Exception('invalid_os')
+        logging.info("check os [OK]")
+        logging.debug("check kernel ...")
+        if os.system('uname -r | grep -E "' + self.data['require_kernel'] + '" >/dev/null') != 0:
+            self.data['invalid_kernel'] = True
+            raise Exception('invalid_kernel')
         logging.info("check os [OK]")
         logging.debug("check data partition " + self.data['require_data_partition'] + " ...")
         if os.system('mount | grep "on ' + self.data['require_data_partition'] + ' type" >/dev/null') != 0:
